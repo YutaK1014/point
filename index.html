@@ -47,10 +47,8 @@
       <div class="dialog-head"><h2 id="pointDialogTitle">ポイントを追加</h2><button type="button" class="icon-btn close">×</button></div>
       <input type="hidden" id="pointId" />
       <label>サービス名<input id="pointName" required maxlength="30" placeholder="例：楽天ポイント" /></label>
-      <label>現在のポイント<input id="pointBalance" type="number" min="0" step="1" required placeholder="0" /></label>
-      <label>先月末のポイント<input id="pointPrevBalance" type="number" min="0" step="1" required placeholder="0" /></label>
       <label>テーマ色<input id="pointColor" type="color" value="#5b66e8" /></label>
-      <div class="dialog-actions"><button type="button" class="secondary close">キャンセル</button><button class="primary" value="default">保存</button></div>
+      <div class="dialog-actions"><button type="button" id="deletePointBtn" class="danger hidden">このポイントを削除</button><div class="dialog-actions-right"><button type="button" class="secondary close">キャンセル</button><button class="primary" value="default">保存</button></div></div>
     </form>
   </dialog>
 

@@ -6,7 +6,8 @@ let activePointId=null;
 const save=()=>localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
 const fmt=n=>Number(n||0).toLocaleString('ja-JP');
 const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
-const today=()=>new Date().toISOString().slice(0,10);
+const today=()=>{const d=new Date();const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`;};
+const currentMonth=()=>today().slice(0,7);
 const daysUntil=date=>Math.ceil((new Date(date+'T23:59:59')-new Date())/86400000);
 
 function render(){
@@ -20,16 +21,73 @@ function render(){
 }
 
 function makeCard(p){
+  // 旧版の基準値データを廃止し、現在表示中の残高を次回変更時の比較基準にする。
+  if(p.balanceInitialized===undefined){
+    p.balance=Number(p.balance||0);
+    p.prevBalance=p.balance;
+    p.balanceInitialized=p.balance!==0;
+    delete p.baselineBalance;
+    delete p.baselineSet;
+    delete p.baselineInitialized;
+    save();
+  }
+
   const node=$('#pointCardTemplate').content.firstElementChild.cloneNode(true);
   node.style.setProperty('--accent',p.color||'#5b66e8');
   node.querySelector('h3').textContent=p.name;
-  const mark=node.querySelector('.brand-mark'); mark.textContent=p.name.slice(0,1); mark.style.color='#fff'; mark.style.display='grid'; mark.style.placeItems='center'; mark.style.fontWeight='900';
-  const input=node.querySelector('.balance-input'); input.value=p.balance;
-  const diff=Number(p.balance)-Number(p.prevBalance||0); const change=node.querySelector('.change');
-  change.textContent=`前月比 ${diff>0?'+':''}${fmt(diff)} pt`; change.classList.add(diff>0?'plus':diff<0?'minus':'zero');
+  const mark=node.querySelector('.brand-mark');
+  mark.textContent=p.name.slice(0,1);
+  mark.style.color='#fff';
+  mark.style.display='grid';
+  mark.style.placeItems='center';
+  mark.style.fontWeight='900';
+
+  const input=node.querySelector('.balance-input');
+  const change=node.querySelector('.change');
+  input.value=Number(p.balance||0);
+
+  const updateChangeDisplay=(current,base,initialized=true)=>{
+    if(!initialized){
+      change.textContent='前月比 0 pt（0%）';
+      change.className='change zero';
+      return;
+    }
+
+    const difference=Number(current||0)-Number(base||0);
+    const rate=Number(base)===0?(difference===0?0:null):(difference/Number(base))*100;
+    const rateText=rate===null?'—':`${rate>0?'+':''}${rate.toFixed(1).replace(/\.0$/,'')}`;
+    change.textContent=`前月比 ${difference>0?'+':''}${fmt(difference)} pt（${rateText}%）`;
+    change.className=`change ${difference>0?'plus':difference<0?'minus':'zero'}`;
+  };
+
+  updateChangeDisplay(p.balance,p.prevBalance,p.balanceInitialized);
+
+  // 入力中は、現在画面に保存されている残高との差をプレビューする。
+  // この時点では保存値を変更しないため、比較基準は失われない。
+  input.addEventListener('input',()=>{
+    const enteredBalance=Math.max(0,Number(input.value||0));
+    updateChangeDisplay(enteredBalance,p.balance,p.balanceInitialized);
+  });
+  input.addEventListener('change',()=>{
+    const enteredBalance=Math.max(0,Number(input.value||0));
+    const oldBalance=Number(p.balance||0);
+
+    if(!p.balanceInitialized){
+      // 初回入力だけは、その数字を初期残高として扱い、前月比は0にする。
+      p.balance=enteredBalance;
+      p.prevBalance=enteredBalance;
+      p.balanceInitialized=true;
+    }else{
+      p.prevBalance=oldBalance;
+      p.balance=enteredBalance;
+    }
+
+    save();
+    render();
+  });
+
   const future=(p.expiries||[]).filter(e=>daysUntil(e.date)>=0).sort((a,b)=>a.date.localeCompare(b.date));
   node.querySelector('.expiry-summary').textContent=future[0]?`次回失効 ${future[0].date}・${fmt(future[0].amount)}pt`:'有効期限の登録なし';
-  input.addEventListener('change',()=>{p.balance=Math.max(0,Number(input.value||0));save();render()});
   node.querySelector('.detail-btn').addEventListener('click',()=>openDetail(p.id));
   node.querySelector('.menu-btn').addEventListener('click',()=>openPointDialog(p));
   return node;
@@ -37,15 +95,34 @@ function makeCard(p){
 
 function openPointDialog(p=null){
   $('#pointDialogTitle').textContent=p?'ポイントを編集':'ポイントを追加';
-  $('#pointId').value=p?.id||''; $('#pointName').value=p?.name||''; $('#pointBalance').value=p?.balance??''; $('#pointPrevBalance').value=p?.prevBalance??''; $('#pointColor').value=p?.color||'#5b66e8';
+  $('#pointId').value=p?.id||''; $('#pointName').value=p?.name||''; $('#pointColor').value=p?.color||'#5b66e8';
+  $('#deletePointBtn').classList.toggle('hidden',!p);
   $('#pointDialog').showModal();
 }
 
 $('#pointForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=$('#pointId').value;
-  const payload={name:$('#pointName').value.trim(),balance:Number($('#pointBalance').value),prevBalance:Number($('#pointPrevBalance').value),color:$('#pointColor').value};
-  if(id){Object.assign(data.points.find(p=>p.id===id),payload)} else data.points.push({id:uid(),...payload,histories:[],expiries:[]});
+  const payload={name:$('#pointName').value.trim(),color:$('#pointColor').value};
+  if(id){
+    Object.assign(data.points.find(p=>p.id===id),payload);
+  }else{
+    data.points.push({id:uid(),...payload,balance:0,prevBalance:0,balanceInitialized:false,histories:[],expiries:[]});
+  }
   save();render();$('#pointDialog').close();
+});
+
+$('#deletePointBtn').addEventListener('click',()=>{
+  const id=$('#pointId').value;
+  const point=data.points.find(p=>p.id===id);
+  if(!point)return;
+  const confirmed=confirm(`「${point.name}」を削除しますか？
+獲得履歴と有効期限もすべて削除されます。`);
+  if(!confirmed)return;
+  data.points=data.points.filter(p=>p.id!==id);
+  if(activePointId===id)activePointId=null;
+  save();
+  render();
+  $('#pointDialog').close();
 });
 
 document.querySelectorAll('.close').forEach(b=>b.addEventListener('click',()=>$('#pointDialog').close()));
